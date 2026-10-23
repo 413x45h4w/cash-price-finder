@@ -27,11 +27,11 @@ function episode(d,id){const e=d.episodes.find(x=>x.id==id),comps=e.components;
  const B={MO:ebm('MO'),IL:ebm('IL')},out=[];
  for(const p of d.providers){const pr=d.byProv[p.id]||{};const pc=pr[e.primary_code];
   const allin=pr['EP:'+id]||(pc&&pc.all_inclusive?pc:null);
-  if(allin){out.push({provider:p,total:allin.cash,listed:allin.cash,estimated:0,missing:[],all_inclusive:true,flag:null});continue}
+  if(allin){out.push({provider:p,total:allin.cash,listed:allin.cash,estimated:0,missing:[],all_inclusive:true,flag:null,comparability:allin.comparability||'Medium'});continue}
   if(!pc)continue;let listed=0,est=0;const missing=[];
   for(const cp of comps){const b=bm(d,cp[0],p.state);if(cp[1]=='contrast')continue;
    if(cp[1]=='facility+professional'){listed+=pc.cash;const f=b?b.fair_professional:null;if(f){est+=f;missing.push(`${cp[0]} professional (physician) fee`)}}
    else if(pr[cp[0]])listed+=pr[cp[0]].cash; else{const f=fairFor(b,cp[1]);est+=f||0;missing.push(`${cp[0]} ${cp[1]}`)}}
-  out.push({provider:p,total:r2(listed+est),listed:r2(listed),estimated:r2(est),missing,all_inclusive:false,flag:pc.flag})}
+  out.push({provider:p,total:r2(listed+est),listed:r2(listed),estimated:r2(est),missing,all_inclusive:false,flag:pc.flag,comparability:pc.comparability||'Medium'})}
  out.forEach(o=>{const b=B[o.provider.state].total;o.multiple=b?r2(o.total/b):null});out.sort((a,b)=>a.total-b.total);
  return {episode:e,components:comps,benchmarks:B,rows:out};}
