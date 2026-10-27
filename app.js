@@ -1,6 +1,6 @@
 // Client-side port of app/server.py (search, service, episode). Data: data/<metro>/*.json
 const D={};let META={metros:[]};const metroInfo=m=>META.metros.find(x=>x.metro==m)||{};
-async function load(m){if(D[m])return D[m];const g=n=>fetch(`data/${m}/${n}.json`).then(r=>r.json());
+async function load(m){if(D[m])return D[m];const g=n=>fetch(`data/${m}/${n}.json?v=${window.DV||''}`).then(r=>r.json());
  const [providers,prices,benchmarks,episodes,index]=await Promise.all(['providers','prices','benchmarks','episodes','search_index'].map(g));
  const P=Object.fromEntries(providers.map(p=>[p.id,p])),B={};benchmarks.forEach(b=>B[(b.lk||b.state)+'|'+b.code]=b);
  const byProv={};prices.forEach(r=>{(byProv[r.provider_id]??={})[r.code]=r});
