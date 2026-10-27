@@ -1,7 +1,7 @@
-﻿# Comparability-model static export. Reads parsed MRF CSVs (v3) + existing benchmarks/providers JSON.
+# Comparability-model static export. Reads parsed MRF CSVs (v3) + existing benchmarks/providers JSON.
 import csv,glob,os,json,re,statistics as S,collections
 R=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))          # site/
-ROOT=os.path.dirname(R); PARSED=ROOT+'/parsed/20261023T114040_v3'; D=R+'/data/stl'
+ROOT=os.path.dirname(R); PARSED=ROOT+'/parsed/20261023T114040_v3'; D=R+'/data/41180'
 J=lambda n: json.load(open(f'{D}/{n}.json',encoding='utf-8'))
 provs=J('providers'); BMs=J('benchmarks'); old=J('prices'); eps=J('episodes')
 P={p['id']:p for p in provs}; B={(b['state'],b['code']):b for b in BMs}
