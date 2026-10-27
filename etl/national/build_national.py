@@ -2,6 +2,7 @@
 Usage: build_national.py <parsed_dir> <file_ccn_map.csv> [only_complete=1]"""
 import csv,os,sys,json,re,collections,statistics as S,glob,sqlite3,time
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__))); import bench as BN
+sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); import sanity as SAN
 SITE=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); ROOT=os.path.dirname(SITE)
 PARSED,MAP=sys.argv[1],sys.argv[2]; ONLY_COMPLETE=(sys.argv[3]!='0') if len(sys.argv)>3 else True
 csv.field_size_limit(2**31-1)
@@ -92,22 +93,44 @@ by_cbsa=collections.defaultdict(list)
 for ccn,(k,m,mt) in best.items(): by_cbsa[m['cbsa']].append((m,mt))
 eps=json.load(open(SITE+'/data/41180/episodes.json',encoding='utf-8')); idx0=json.load(open(SITE+'/data/41180/search_index.json',encoding='utf-8'))
 meta_path=SITE+'/data/meta.json'; META_SITE=json.load(open(meta_path,encoding='utf-8'))
-metros={x['metro']:x for x in META_SITE['metros']}
-log=open(f'{PARSED}/build_{time.strftime("%Y%m%dT%H%M%S")}.log','w',encoding='utf-8'); built=0
+metros={x['metro']:x for x in META_SITE['metros'] if x['metro']=='41180'}
+log=open(f'{PARSED}/build_{time.strftime("%Y%m%dT%H%M%S")}.log','w',encoding='utf-8'); built=0; SANT=collections.Counter()
 for cbsa,L in sorted(by_cbsa.items()):
   if cbsa=='41180': continue   # St. Louis: curated release kept as-is
   if ONLY_COMPLETE and any(s not in META for s in all_files_by_cbsa[cbsa]): continue
-  provs=[]; prices=[]; bms=[]; parts=collections.defaultdict(lambda:([],[]))
-  for m,mt in L: parts[m['state']][0].append(m['ccn']); parts[m['state']][1].append(m['zip'][:5])
-  PL={st:BN.part_params(cbsa,st,cc,zz) for st,(cc,zz) in parts.items()}
-  Bd={}
-  for st,Lp in PL.items():
-    for r in BN.rows_for(st,cbsa,st,cbsa,Lp): bms.append(r); Bd[(st,r['code'])]=r
+  provs=[]; prices=[]; bms=[]
+  # parts = (state, CMS wage-index CBSA from Table 2 [metro divisions/reclass], PFS locality from the hospital's ZIP)
+  st_wc=collections.defaultdict(collections.Counter)
   for m,mt in L:
-    ccn=m['ccn']; pid='h'+ccn; st=m['state']; hi=BN.hosp_ipps(ccn)
+    t=BN.T2.get(m['ccn'])
+    if t: st_wc[m['state']][t['cbsa']]+=1
+  gkey={}
+  for m,mt in L:
+    t=BN.T2.get(m['ccn']); st=m['state']
+    wc=t['cbsa'] if t else (st_wc[st].most_common(1)[0][0] if st_wc[st] else cbsa)
+    gkey[m['ccn']]=(st,wc,BN.ZIP.get(m['zip'][:5]))
+  groups=collections.defaultdict(list)
+  for m,mt in L: groups[gkey[m['ccn']]].append(m)
+  nst=collections.Counter(k[0] for k in groups)
+  def lkname(k):
+    st,wc,loc=k
+    if nst[st]==1: return st
+    g=BN.GPCI.get(loc) if loc else None
+    nm=(g['name'].split('(')[0].strip().title() if g else 'Rest')
+    same=[x for x in groups if x[0]==st and x[2]==loc]
+    return f"{st} {nm}"+(f" ({wc})" if len(same)>1 else '')
+  LK={k:lkname(k) for k in groups}; PART={c:LK[k] for c,k in gkey.items()}
+  PL={LK[k]:BN.part_params(k[1],k[0],[m['ccn'] for m in ms],[m['zip'][:5] for m in ms]) for k,ms in groups.items()}
+  PST={LK[k]:k[0] for k in groups}; PWC={LK[k]:k[1] for k in groups}
+  parts={LK[k]:(ms,) for k,ms in groups.items()}
+  Bd={}
+  for lk,Lp in PL.items():
+    for r in BN.rows_for(lk,cbsa,PST[lk],PWC[lk],Lp): bms.append(r); Bd[(lk,r['code'])]=r
+  for m,mt in L:
+    ccn=m['ccn']; pid='h'+ccn; st=PART[ccn]; hi=BN.hosp_ipps(ccn)
     if hi:
       Lh=dict(PL[st],ipps_wi=hi[0],gaf=hi[1])
-      for r in BN.rows_for('H'+ccn,cbsa,st,cbsa,Lh,drg_only=True,label=' (this hospital, Table 2)'): bms.append(r); Bd[('H'+ccn,r['code'])]=r
+      for r in BN.rows_for('H'+ccn,cbsa,PST[st],PWC[st],Lh,drg_only=True,label=' (this hospital, Table 2)'): bms.append(r); Bd[('H'+ccn,r['code'])]=r
     Bget=lambda code,ccn=ccn,st=st: Bd.get(('H'+ccn,code)) or Bd.get((st,code))
     f=f"{PARSED}/files/{m['sha256'][:16]}.csv"
     try:
@@ -119,18 +142,18 @@ for cbsa,L in sorted(by_cbsa.items()):
     z=m['zip'][:5]; ll=BN.GEO.get(z,(None,None)); nm=(mt.get('hospital_name') or '').strip()
     name=nm if nm and float(m['score'])>=0.8 and not nm.isupper() else m['matched_name'].title().replace("'S ","'s ")
     d,hp=DOM.get(m['sha256'],('',''))
-    provs.append(dict(id=pid,metro=cbsa,ccn=ccn,name=name,type='Hospital',subtype=m['type'],city=m['city'].title(),state=st,system=d,address=f"{m['city'].title()}, {st} {z}",
+    provs.append(dict(id=pid,metro=cbsa,ccn=ccn,name=name,type='Hospital',subtype=m['type'],city=m['city'].title(),state=PST[st],part=st,system=d,address=f"{m['city'].title()}, {PST[st]} {z}",
       lat=ll[0],lon=ll[1],page_url=hp or MURL.get(m['sha256']),file_url=MURL.get(m['sha256']),file_format=mt.get('format'),vintage=m['run'],last_updated=mt.get('last_updated_on'),
       note=None if float(m['score'])>=0.8 else f"File matched to CMS hospital by name (score {m['score']}): '{m['file_name'][:80]}'"))
   if not provs: continue
   D=f'{SITE}/data/{cbsa}'; os.makedirs(D,exist_ok=True)
-  n=collections.Counter(r['code'] for r in prices if r['comparability']!='Low')
-  idx=dict(idx0,codes=[dict(x,n=n.get(x['c'],0)) for x in idx0['codes']])
+  sn=SAN.apply(prices,provs,bms); SANT.update(sn); log.write(f'{cbsa} sanity {dict(sn)}\n')
+  idx=SAN.recount(idx0,prices)
   w=lambda nme,o: json.dump(o,open(f'{D}/{nme}.json','w',encoding='utf-8'),separators=(',',':'),ensure_ascii=False)
   w('providers',provs); w('prices',prices); w('benchmarks',bms); w('episodes',eps); w('search_index',idx)
   lat=[p['lat'] for p in provs if p['lat']]; lon=[p['lon'] for p in provs if p['lon']]
   title=L[0][0]['cbsa_title']
-  metros[cbsa]=dict(metro=cbsa,name=title,cbsa=cbsa,states=','.join(sorted(PL)),parts=sorted(PL,key=lambda s:-len(parts[s][0])),n_hosp=len(provs),
+  metros[cbsa]=dict(metro=cbsa,name=title,cbsa=cbsa,states=','.join(sorted(set(PST.values()))),parts=sorted(PL,key=lambda s:-len(parts[s][0])),n_hosp=len(provs),
     center=[round(S.median(lat),4),round(S.median(lon),4)] if lat else None,
     pfs=' / '.join(f"{s}: {PL[s]['pfs_loc']}, OPPS WI {PL[s]['opps_wi']}" for s in PL))
   built+=1; log.write(f'{cbsa} {title}: {len(provs)} hospitals, {len(prices)} rows\n')
@@ -138,4 +161,4 @@ ml=sorted(metros.values(),key=lambda x:(x['metro']!='41180',x['name']))
 META_SITE['metros']=ml
 META_SITE['vintage']='Hospital MRFs fetched 2026-10-23..24 (national collection; St. Louis curated 2026-10-23); Medicare: OPPS Add. B Oct-2026, PFS 2026 RVU26D + ZIP5 Oct-2026 localities, CLFS 2026 Q4, IPPS FY2027 CN Tables 2/3/5'
 json.dump(META_SITE,open(meta_path,'w',encoding='utf-8'),separators=(',',':'),ensure_ascii=False)
-print('built',built,'metros total',len(ml)); log.close()
+print('built',built,'metros total',len(ml),'sanity',dict(SANT)); log.close()
